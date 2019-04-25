@@ -124,15 +124,28 @@ namespace op
             spVideoSeek->second = 0;
 
             // Required parameters
-            const auto renderOutput = wrapperStructPose.renderMode != RenderMode::None
-                                        || wrapperStructFace.renderMode != RenderMode::None
-                                        || wrapperStructHand.renderMode != RenderMode::None;
-            const auto renderOutputGpu = wrapperStructPose.renderMode == RenderMode::Gpu
-                                            || wrapperStructFace.renderMode == RenderMode::Gpu
-                                            || wrapperStructHand.renderMode == RenderMode::Gpu;
-            const auto renderFace = wrapperStructFace.enable && wrapperStructFace.renderMode != RenderMode::None;
-            const auto renderHand = wrapperStructHand.enable && wrapperStructHand.renderMode != RenderMode::None;
-            const auto renderHandGpu = wrapperStructHand.enable && wrapperStructHand.renderMode == RenderMode::Gpu;
+            const auto gpuMode = getGpuMode();
+            const auto renderModePose = (
+                wrapperStructPose.renderMode != RenderMode::Auto
+                    ? wrapperStructPose.renderMode
+                    : (gpuMode == GpuMode::Cuda ? RenderMode::Gpu : RenderMode::Cpu));
+            const auto renderModeFace = (
+                wrapperStructFace.renderMode != RenderMode::Auto
+                    ? wrapperStructFace.renderMode
+                    : (gpuMode == GpuMode::Cuda ? RenderMode::Gpu : RenderMode::Cpu));
+            const auto renderModeHand = (
+                wrapperStructHand.renderMode != RenderMode::Auto
+                    ? wrapperStructHand.renderMode
+                    : (gpuMode == GpuMode::Cuda ? RenderMode::Gpu : RenderMode::Cpu));
+            const auto renderOutput = renderModePose != RenderMode::None
+                                        || renderModeFace != RenderMode::None
+                                        || renderModeHand != RenderMode::None;
+            const auto renderOutputGpu = renderModePose == RenderMode::Gpu
+                || renderModeFace == RenderMode::Gpu
+                || renderModeHand == RenderMode::Gpu;
+            const auto renderFace = wrapperStructFace.enable && renderModeFace != RenderMode::None;
+            const auto renderHand = wrapperStructHand.enable && renderModeHand != RenderMode::None;
+            const auto renderHandGpu = wrapperStructHand.enable && renderModeHand == RenderMode::Gpu;
 
             // Check no wrong/contradictory flags enabled
             const auto userInputAndPreprocessingWsEmpty = userInputWs.empty();
@@ -146,7 +159,7 @@ namespace op
             auto numberThreads = wrapperStructPose.gpuNumber;
             auto gpuNumberStart = wrapperStructPose.gpuNumberStart;
             // CPU --> 1 thread or no pose extraction
-            if (getGpuMode() == GpuMode::NoGpu)
+            if (gpuMode == GpuMode::NoGpu)
             {
                 numberThreads = (wrapperStructPose.gpuNumber == 0 ? 0 : 1);
                 gpuNumberStart = 0;
@@ -273,13 +286,13 @@ namespace op
                         ));
 
                     // Pose renderers
-                    if (renderOutputGpu || wrapperStructPose.renderMode == RenderMode::Cpu)
+                    if (renderOutputGpu || renderModePose == RenderMode::Cpu)
                     {
-                        // If wrapperStructPose.renderMode != RenderMode::Gpu but renderOutput, then we create an
+                        // If renderModePose != RenderMode::Gpu but renderOutput, then we create an
                         // alpha = 0 pose renderer in order to keep the removing background option
-                        const auto alphaKeypoint = (wrapperStructPose.renderMode != RenderMode::None
+                        const auto alphaKeypoint = (renderModePose != RenderMode::None
                                                     ? wrapperStructPose.alphaKeypoint : 0.f);
-                        const auto alphaHeatMap = (wrapperStructPose.renderMode != RenderMode::None
+                        const auto alphaHeatMap = (renderModePose != RenderMode::None
                                                     ? wrapperStructPose.alphaHeatMap : 0.f);
                         // GPU rendering
                         if (renderOutputGpu)
@@ -294,7 +307,7 @@ namespace op
                             }
                         }
                         // CPU rendering
-                        if (wrapperStructPose.renderMode == RenderMode::Cpu)
+                        if (renderModePose == RenderMode::Cpu)
                         {
                             poseCpuRenderer = std::make_shared<PoseCpuRenderer>(
                                 wrapperStructPose.poseModel, wrapperStructPose.renderThreshold,
@@ -475,7 +488,7 @@ namespace op
                 {
                     log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
                     // CPU rendering
-                    if (wrapperStructFace.renderMode == RenderMode::Cpu)
+                    if (renderModeFace == RenderMode::Cpu)
                     {
                         // Construct face renderer
                         const auto faceRenderer = std::make_shared<FaceCpuRenderer>(wrapperStructFace.renderThreshold,
@@ -485,7 +498,7 @@ namespace op
                         cpuRenderers.emplace_back(std::make_shared<WFaceRenderer<TDatumsSP>>(faceRenderer));
                     }
                     // GPU rendering
-                    else if (wrapperStructFace.renderMode == RenderMode::Gpu)
+                    else if (renderModeFace == RenderMode::Gpu)
                     {
                         for (auto i = 0u; i < poseExtractorsWs.size(); i++)
                         {
@@ -519,7 +532,7 @@ namespace op
                 {
                     log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
                     // CPU rendering
-                    if (wrapperStructHand.renderMode == RenderMode::Cpu)
+                    if (renderModeHand == RenderMode::Cpu)
                     {
                         // Construct hand renderer
                         const auto handRenderer = std::make_shared<HandCpuRenderer>(wrapperStructHand.renderThreshold,
@@ -529,7 +542,7 @@ namespace op
                         cpuRenderers.emplace_back(std::make_shared<WHandRenderer<TDatumsSP>>(handRenderer));
                     }
                     // GPU rendering
-                    else if (wrapperStructHand.renderMode == RenderMode::Gpu)
+                    else if (renderModeHand == RenderMode::Gpu)
                     {
                         for (auto i = 0u; i < poseExtractorsWs.size(); i++)
                         {
@@ -667,7 +680,7 @@ namespace op
                     outputWs.emplace_back(std::make_shared<WHandSaver<TDatumsSP>>(keypointSaver));
             }
             log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
-            // Write OpenPose output data on disk in json format (body/hand/face keypoints, body part locations if
+            // Write OpenPose output data on disk in JSON format (body/hand/face keypoints, body part locations if
             // enabled, etc.)
             if (!writeJsonCleaned.empty())
             {
@@ -676,7 +689,7 @@ namespace op
                 outputWs.emplace_back(std::make_shared<WPeopleJsonSaver<TDatumsSP>>(peopleJsonSaver));
             }
             log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
-            // Write people pose data on disk (COCO validation json format)
+            // Write people pose/foot/face/hand/etc. data on disk (COCO validation JSON format)
             if (!wrapperStructOutput.writeCocoJson.empty())
             {
                 log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
@@ -684,6 +697,7 @@ namespace op
                 const auto humanFormat = true;
                 const auto cocoJsonSaver = std::make_shared<CocoJsonSaver>(
                     wrapperStructOutput.writeCocoJson, wrapperStructPose.poseModel, humanFormat,
+                    wrapperStructOutput.writeCocoJsonVariants,
                     (wrapperStructPose.poseModel != PoseModel::CAR_22
                         && wrapperStructPose.poseModel != PoseModel::CAR_12
                         ? CocoJsonFormat::Body : CocoJsonFormat::Car),
@@ -691,16 +705,6 @@ namespace op
                 outputWs.emplace_back(std::make_shared<WCocoJsonSaver<TDatumsSP>>(cocoJsonSaver));
             }
             log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
-            // Write people foot pose data on disk (COCO validation json format for foot data)
-            if (!wrapperStructOutput.writeCocoFootJson.empty())
-            {
-                // If humanFormat: bigger size (& maybe slower to process), but easier for user to read it
-                const auto humanFormat = true;
-                const auto cocoJsonSaver = std::make_shared<CocoJsonSaver>(
-                    wrapperStructOutput.writeCocoFootJson, wrapperStructPose.poseModel, humanFormat,
-                    CocoJsonFormat::Foot);
-                outputWs.emplace_back(std::make_shared<WCocoJsonSaver<TDatumsSP>>(cocoJsonSaver));
-            }
             log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
             // Write frames as desired image format on hard disk
             if (!writeImagesCleaned.empty())
@@ -790,7 +794,7 @@ namespace op
                 log("", Priority::Low, __LINE__, __FUNCTION__, __FILE__);
                 // PoseRenderers to Renderers
                 std::vector<std::shared_ptr<Renderer>> renderers;
-                if (wrapperStructPose.renderMode == RenderMode::Cpu)
+                if (renderModePose == RenderMode::Cpu)
                     renderers.emplace_back(std::static_pointer_cast<Renderer>(poseCpuRenderer));
                 else
                     for (const auto& poseGpuRenderer : poseGpuRenderers)
